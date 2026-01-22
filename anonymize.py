@@ -235,6 +235,11 @@ class DICOMAnonymizer:
             if hasattr(ds, tag):
                 original = getattr(ds, tag)
                 setattr(ds, tag, self.get_or_create_uid(original))
+
+        # Keep file meta UIDs consistent with dataset UIDs
+        if hasattr(ds, "file_meta") and hasattr(ds, "SOPInstanceUID"):
+            if hasattr(ds.file_meta, "MediaStorageSOPInstanceUID"):
+                ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
         
         # Anonymize dates
         for tag in self.DATE_TAGS:

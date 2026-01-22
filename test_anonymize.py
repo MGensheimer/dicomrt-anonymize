@@ -258,6 +258,20 @@ class TestFullAnonymization:
         assert hasattr(ds, 'StudyInstanceUID')
         assert hasattr(ds, 'SeriesInstanceUID')
 
+    def test_updates_file_meta_media_storage_sop_instance_uid(self, anonymizer):
+        """file_meta MediaStorageSOPInstanceUID should match remapped SOPInstanceUID."""
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+        original_uid = "1.2.3.4.5.6.7.8.9"
+        ds.SOPInstanceUID = original_uid
+        ds.file_meta.MediaStorageSOPInstanceUID = original_uid
+
+        anonymizer.anonymize_dataset(ds)
+
+        assert ds.SOPInstanceUID != original_uid
+        assert ds.file_meta.MediaStorageSOPInstanceUID == ds.SOPInstanceUID
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
