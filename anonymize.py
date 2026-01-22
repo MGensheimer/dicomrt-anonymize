@@ -7,15 +7,20 @@ maintaining UID relationships between referenced files.
 """
 
 import argparse
+import csv
 import json
 from pathlib import Path
 
 import pydicom
+from pydicom.tag import Tag
 from pydicom.uid import generate_uid
 
 
 class DICOMAnonymizer:
     """Anonymizes DICOM files while maintaining UID relationships."""
+    
+    # Default path to Table E1-1 tags CSV file (relative to this script)
+    DEFAULT_TABLE_E1_1_CSV = Path(__file__).parent / "table_e1_1_tags.csv"
     
     # DICOM tags that contain UIDs which may need remapping
     UID_TAGS = [
@@ -80,19 +85,84 @@ class DICOMAnonymizer:
         'CommentsOnThePerformedProcedureStep',
     ]
     
-    def __init__(self, anon_patient_name: str = "ANONYMOUS", anon_patient_id: str = "000000"):
+    @classmethod
+    def load_table_e1_1_tags(cls, csv_path: Path = None) -> set[Tag]:
+        """
+        Load DICOM tags from Table E1-1 CSV file.
+        
+        Table E1-1 defines the "Application Level Confidentiality Profile Attributes"
+        from the DICOM standard. These are attributes that may contain individually
+        identifiable information and should be handled during de-identification.
+        
+        Reference: https://dicom.nema.org/medical/dicom/current/output/chtml/part15/chapter_e.html
+        
+        Args:
+            csv_path: Path to the CSV file. Defaults to table_e1_1_tags.csv
+                     in the same directory as this script.
+        
+        Returns:
+            Set of pydicom Tag objects
+        """
+        if csv_path is None:
+            csv_path = cls.DEFAULT_TABLE_E1_1_CSV
+        
+        tags = set()
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                group = int(row['group'], 16)
+                element = int(row['element'], 16)
+                tags.add(Tag(group, element))
+        
+        return tags
+    
+    @classmethod
+    def get_handled_tag_keywords(cls) -> set[str]:
+        """
+        Get set of tag keywords that are already handled by existing code.
+        These should be skipped when processing Table E1-1 tags.
+        """
+        handled = set()
+        handled.update(cls.UID_TAGS)
+        handled.update(cls.DATE_TAGS)
+        handled.update(cls.TIME_TAGS)
+        handled.update(cls.PATIENT_TAGS)
+        handled.update(cls.OTHER_ID_TAGS)
+        return handled
+    
+    def __init__(
+        self, 
+        anon_patient_name: str = "ANONYMOUS", 
+        anon_patient_id: str = "000000",
+        table_e1_1_csv: Path = None
+    ):
         """
         Initialize the anonymizer.
         
         Args:
             anon_patient_name: Replacement patient name
             anon_patient_id: Replacement patient ID
+            table_e1_1_csv: Path to Table E1-1 tags CSV file. If None, uses default.
         """
         self.uid_map: dict[str, str] = {}  # Maps original UIDs to new UIDs
         self.anon_patient_name = anon_patient_name
         self.anon_patient_id = anon_patient_id
         self.anon_date = "19000101"  # Default anonymized date
         self.anon_time = "000000"    # Default anonymized time
+        
+        # Load Table E1-1 tags for comprehensive anonymization
+        self.table_e1_1_tags = self.load_table_e1_1_tags(table_e1_1_csv)
+        self.handled_keywords = self.get_handled_tag_keywords()
+        
+        # Convert handled keywords to Tags for efficient lookup
+        self._handled_tags = set()
+        for keyword in self.handled_keywords:
+            try:
+                tag = Tag(keyword)
+                self._handled_tags.add(tag)
+            except Exception:
+                # Some keywords may not resolve; that's okay
+                pass
         
     def get_or_create_uid(self, original_uid: str) -> str:
         """
@@ -113,6 +183,42 @@ class DICOMAnonymizer:
             self.uid_map[original_uid] = generate_uid()
             
         return self.uid_map[original_uid]
+    
+    def _delete_table_e1_1_tags_recursive(self, ds: pydicom.Dataset) -> int:
+        """
+        Recursively walk through dataset and delete Table E1-1 tags
+        that aren't already handled by existing anonymization code.
+        
+        Args:
+            ds: The pydicom Dataset to process
+            
+        Returns:
+            Number of tags deleted
+        """
+        deleted_count = 0
+        tags_to_delete = []
+        
+        for elem in ds:
+            # Skip elements that are already handled by existing code
+            if elem.tag in self._handled_tags:
+                continue
+            
+            # Check if this tag is in Table E1-1 and should be deleted
+            if elem.tag in self.table_e1_1_tags:
+                tags_to_delete.append(elem.tag)
+                continue
+            
+            # Recurse into sequences
+            if elem.VR == "SQ" and elem.value:
+                for item in elem.value:
+                    deleted_count += self._delete_table_e1_1_tags_recursive(item)
+        
+        # Delete the collected tags
+        for tag in tags_to_delete:
+            del ds[tag]
+            deleted_count += 1
+        
+        return deleted_count
     
     def anonymize_dataset(self, ds: pydicom.Dataset) -> pydicom.Dataset:
         """
@@ -170,6 +276,10 @@ class DICOMAnonymizer:
         # Remove private tags (vendor-specific data that may contain identifying info)
         # See: https://pydicom.github.io/pydicom/stable/auto_examples/metadata_processing/plot_anonymize.html
         ds.remove_private_tags()
+        
+        # Delete Table E1-1 tags that aren't already handled above
+        # This recursively walks through all sequences
+        self._delete_table_e1_1_tags_recursive(ds)
             
         return ds
     

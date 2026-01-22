@@ -1,0 +1,8 @@
+data/
+__pycache__/
+output/
+mrn_to_anon_id_mapping.txt
+table_e1_1.txt
+uid_analysis.log
+run_anonymization.sh
+.DS_Store
