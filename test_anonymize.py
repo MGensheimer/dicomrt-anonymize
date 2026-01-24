@@ -209,6 +209,61 @@ class TestRecursiveTagDeletion:
         deleted = anonymizer._delete_table_e1_1_tags_recursive(ds)
         
         assert deleted == 2
+    
+    def test_preserves_rt_structure_names(self, anonymizer):
+        """Should preserve RT Structure Set names even though they're in Table E1-1.
+        
+        These tags are in E1-1 because they *could* contain patient info, but in
+        practice they contain standardized anatomical names essential for treatment.
+        """
+        ds = Dataset()
+        ds.Modality = "RTSTRUCT"
+        
+        # Add StructureSetLabel (3006,0002) and StructureSetName (3006,0004)
+        # These are at the top level of RT Structure Set files
+        ds.add_new(Tag(0x3006, 0x0002), 'SH', "RT Structure Set")  # StructureSetLabel
+        ds.add_new(Tag(0x3006, 0x0004), 'LO', "Planning Structures")  # StructureSetName
+        
+        # Create StructureSetROISequence with ROI names
+        roi1 = Dataset()
+        roi1.ROINumber = 1
+        roi1.add_new(Tag(0x3006, 0x0026), 'LO', "PTV")  # ROIName
+        
+        roi2 = Dataset()
+        roi2.ROINumber = 2
+        roi2.add_new(Tag(0x3006, 0x0026), 'LO', "Heart")  # ROIName
+        
+        roi3 = Dataset()
+        roi3.ROINumber = 3
+        roi3.add_new(Tag(0x3006, 0x0026), 'LO', "Lung_L")  # ROIName
+        
+        ds.StructureSetROISequence = Sequence([roi1, roi2, roi3])
+        
+        # Create RTROIObservationsSequence with observation labels
+        obs1 = Dataset()
+        obs1.ObservationNumber = 1
+        obs1.add_new(Tag(0x3006, 0x0085), 'SH', "PTV_Label")  # ROIObservationLabel
+        
+        ds.RTROIObservationsSequence = Sequence([obs1])
+        
+        # Run the deletion
+        anonymizer._delete_table_e1_1_tags_recursive(ds)
+        
+        # All structure-related tags should be preserved
+        assert Tag(0x3006, 0x0002) in ds  # StructureSetLabel
+        assert ds[Tag(0x3006, 0x0002)].value == "RT Structure Set"
+        
+        assert Tag(0x3006, 0x0004) in ds  # StructureSetName
+        assert ds[Tag(0x3006, 0x0004)].value == "Planning Structures"
+        
+        # ROI names should be preserved
+        for i, expected_name in enumerate(["PTV", "Heart", "Lung_L"]):
+            assert Tag(0x3006, 0x0026) in ds.StructureSetROISequence[i]
+            assert ds.StructureSetROISequence[i][Tag(0x3006, 0x0026)].value == expected_name
+        
+        # ROI observation labels should be preserved
+        assert Tag(0x3006, 0x0085) in ds.RTROIObservationsSequence[0]
+        assert ds.RTROIObservationsSequence[0][Tag(0x3006, 0x0085)].value == "PTV_Label"
 
 
 class TestFullAnonymization:

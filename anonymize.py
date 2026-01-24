@@ -85,6 +85,17 @@ class DICOMAnonymizer:
         'CommentsOnThePerformedProcedureStep',
     ]
     
+    # RT Structure Set tags to PRESERVE even though they're in Table E1-1.
+    # These tags are in E1-1 because they *could* contain patient info,
+    # but in practice they contain standardized anatomical names (e.g., "PTV",
+    # "Heart", "Lung_L") that are essential for treatment planning workflows.
+    PRESERVED_RT_STRUCTURE_TAGS = [
+        Tag(0x3006, 0x0026),  # ROIName - structure names like "PTV", "Heart"
+        Tag(0x3006, 0x0085),  # ROIObservationLabel
+        Tag(0x3006, 0x0002),  # StructureSetLabel
+        Tag(0x3006, 0x0004),  # StructureSetName
+    ]
+    
     @classmethod
     def load_table_e1_1_tags(cls, csv_path: Path = None) -> set[Tag]:
         """
@@ -201,6 +212,10 @@ class DICOMAnonymizer:
         for elem in ds:
             # Skip elements that are already handled by existing code
             if elem.tag in self._handled_tags:
+                continue
+            
+            # Skip RT Structure Set tags that should be preserved
+            if elem.tag in self.PRESERVED_RT_STRUCTURE_TAGS:
                 continue
             
             # Check if this tag is in Table E1-1 and should be deleted
