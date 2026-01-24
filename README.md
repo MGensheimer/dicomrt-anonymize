@@ -82,6 +82,11 @@ The anonymizer handles the following categories of data:
 - Modality and other technical metadata
 - Contour data and geometric information
 
+## Notes
+
+- I recommend using the [Weasis DICOM viewer](https://weasis.org/) to verify that the output files include the structures; it does a better job than other viewers of processing RT structure set files.
+- I have not tested the software on all scanners and kinds of DICOM files, so anonymization is not guaranteed. Always check the output files' DICOM tags to make sure there is no patient information left.
+
 ## Testing
 
 ```bash
