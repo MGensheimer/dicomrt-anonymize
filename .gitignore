@@ -7,3 +7,6 @@ uid_analysis.log
 run_anonymization.sh
 .DS_Store
 inspect_output.txt
+inspect_output_id_rtst.txt
+inspect_output_anon_rtst.txt
+generate_anonymize_script.py
