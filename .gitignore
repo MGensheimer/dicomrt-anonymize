@@ -10,3 +10,4 @@ inspect_output.txt
 inspect_output_id_rtst.txt
 inspect_output_anon_rtst.txt
 generate_anonymize_script.py
+count_rois.py
