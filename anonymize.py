@@ -175,6 +175,15 @@ class DICOMAnonymizer:
                 # Some keywords may not resolve; that's okay
                 pass
         
+        # Also create a specific set for UID tags
+        self._uid_tags = set()
+        for keyword in self.UID_TAGS:
+            try:
+                tag = Tag(keyword)
+                self._uid_tags.add(tag)
+            except Exception:
+                pass
+        
     def get_or_create_uid(self, original_uid: str) -> str:
         """
         Get the mapped UID for an original UID, creating a new one if needed.
@@ -195,6 +204,35 @@ class DICOMAnonymizer:
             
         return self.uid_map[original_uid]
     
+    def _anonymize_uids_recursive(self, ds: pydicom.Dataset) -> int:
+        """
+        Recursively walk through dataset and remap UIDs in UID_TAGS.
+        
+        Args:
+            ds: The pydicom Dataset to process
+            
+        Returns:
+            Number of UIDs remapped
+        """
+        remapped_count = 0
+        for elem in ds:
+            # Check if this tag is in UID_TAGS
+            if elem.tag in self._uid_tags:
+                if elem.value:
+                    if isinstance(elem.value, pydicom.multival.MultiValue):
+                        new_values = [self.get_or_create_uid(val) for val in elem.value]
+                        elem.value = new_values
+                    else:
+                        elem.value = self.get_or_create_uid(elem.value)
+                    remapped_count += 1
+            
+            # Recurse into sequences
+            if elem.VR == "SQ" and elem.value:
+                for item in elem.value:
+                    remapped_count += self._anonymize_uids_recursive(item)
+        
+        return remapped_count
+
     def _delete_table_e1_1_tags_recursive(self, ds: pydicom.Dataset) -> int:
         """
         Recursively walk through dataset and delete Table E1-1 tags
@@ -245,11 +283,8 @@ class DICOMAnonymizer:
         Returns:
             The anonymized dataset
         """
-        # Anonymize core UIDs
-        for tag in self.UID_TAGS:
-            if hasattr(ds, tag):
-                original = getattr(ds, tag)
-                setattr(ds, tag, self.get_or_create_uid(original))
+        # Anonymize core UIDs recursively (handles both top-level and nested sequences)
+        self._anonymize_uids_recursive(ds)
 
         # Keep file meta UIDs consistent with dataset UIDs
         if hasattr(ds, "file_meta") and hasattr(ds, "SOPInstanceUID"):
@@ -283,16 +318,6 @@ class DICOMAnonymizer:
             if hasattr(ds, tag):
                 setattr(ds, tag, "")
         
-        # Handle RT Structure Set specific sequences
-        if hasattr(ds, 'ReferencedFrameOfReferenceSequence'):
-            self._anonymize_referenced_frame_of_reference_sequence(
-                ds.ReferencedFrameOfReferenceSequence
-            )
-        
-        # Handle ROI Contour Sequence (contains image references per contour)
-        if hasattr(ds, 'ROIContourSequence'):
-            self._anonymize_roi_contour_sequence(ds.ROIContourSequence)
-        
         # Remove private tags (vendor-specific data that may contain identifying info)
         # See: https://pydicom.github.io/pydicom/stable/auto_examples/metadata_processing/plot_anonymize.html
         ds.remove_private_tags()
@@ -302,50 +327,6 @@ class DICOMAnonymizer:
         self._delete_table_e1_1_tags_recursive(ds)
             
         return ds
-    
-    def _anonymize_referenced_frame_of_reference_sequence(self, seq):
-        """Anonymize UIDs in ReferencedFrameOfReferenceSequence."""
-        for frame_ref in seq:
-            if hasattr(frame_ref, 'FrameOfReferenceUID'):
-                frame_ref.FrameOfReferenceUID = self.get_or_create_uid(
-                    frame_ref.FrameOfReferenceUID
-                )
-            
-            if hasattr(frame_ref, 'RTReferencedStudySequence'):
-                for study_ref in frame_ref.RTReferencedStudySequence:
-                    if hasattr(study_ref, 'ReferencedSOPInstanceUID'):
-                        study_ref.ReferencedSOPInstanceUID = self.get_or_create_uid(
-                            study_ref.ReferencedSOPInstanceUID
-                        )
-                    if hasattr(study_ref, 'ReferencedSOPClassUID'):
-                        # SOP Class UIDs are standard and should NOT be changed
-                        pass
-                    
-                    if hasattr(study_ref, 'RTReferencedSeriesSequence'):
-                        for series_ref in study_ref.RTReferencedSeriesSequence:
-                            if hasattr(series_ref, 'SeriesInstanceUID'):
-                                series_ref.SeriesInstanceUID = self.get_or_create_uid(
-                                    series_ref.SeriesInstanceUID
-                                )
-                            
-                            if hasattr(series_ref, 'ContourImageSequence'):
-                                for img_ref in series_ref.ContourImageSequence:
-                                    if hasattr(img_ref, 'ReferencedSOPInstanceUID'):
-                                        img_ref.ReferencedSOPInstanceUID = self.get_or_create_uid(
-                                            img_ref.ReferencedSOPInstanceUID
-                                        )
-    
-    def _anonymize_roi_contour_sequence(self, seq):
-        """Anonymize UIDs in ROIContourSequence."""
-        for roi_contour in seq:
-            if hasattr(roi_contour, 'ContourSequence'):
-                for contour in roi_contour.ContourSequence:
-                    if hasattr(contour, 'ContourImageSequence'):
-                        for img_ref in contour.ContourImageSequence:
-                            if hasattr(img_ref, 'ReferencedSOPInstanceUID'):
-                                img_ref.ReferencedSOPInstanceUID = self.get_or_create_uid(
-                                    img_ref.ReferencedSOPInstanceUID
-                                )
     
     def save_uid_mapping(self, filepath: Path):
         """Save the UID mapping to a JSON file for reference."""

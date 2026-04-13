@@ -304,16 +304,42 @@ class TestFullAnonymization:
         ds.SOPInstanceUID = original_sop_uid
         ds.StudyInstanceUID = "1.2.3.4.5.6.7.8.10"
         ds.SeriesInstanceUID = "1.2.3.4.5.6.7.8.11"
-        
+
         anonymizer.anonymize_dataset(ds)
-        
+
         # UIDs should exist but be different (remapped)
         assert hasattr(ds, 'SOPInstanceUID')
         assert ds.SOPInstanceUID != original_sop_uid
         assert hasattr(ds, 'StudyInstanceUID')
         assert hasattr(ds, 'SeriesInstanceUID')
 
+    def test_anonymize_uids_recursively(self, anonymizer):
+        """UIDs inside sequences should be remapped recursively."""
+        ds = Dataset()
+        # Structure Set ROI Sequence (3006, 0020)
+        roi_item = Dataset()
+        original_ref_for_uid = "1.2.840.113619.2.290.3.4228524753.206.1496410653.617.9285.1"
+        roi_item.ReferencedFrameOfReferenceUID = original_ref_for_uid
+        ds.StructureSetROISequence = Sequence([roi_item])
+
+        # Another nested sequence
+        nested_item = Dataset()
+        original_sop_uid = "1.2.3.4.5.6.7.8.9"
+        nested_item.ReferencedSOPInstanceUID = original_sop_uid
+        ds.ReferencedFrameOfReferenceSequence = Sequence([Dataset()])
+        ds.ReferencedFrameOfReferenceSequence[0].RTReferencedStudySequence = Sequence([nested_item])
+
+        anonymizer.anonymize_dataset(ds)
+
+        # Check remapping
+        assert ds.StructureSetROISequence[0].ReferencedFrameOfReferenceUID != original_ref_for_uid
+        assert ds.StructureSetROISequence[0].ReferencedFrameOfReferenceUID.startswith("1.2.826.0.1.3680043.8.498.")
+
+        assert ds.ReferencedFrameOfReferenceSequence[0].RTReferencedStudySequence[0].ReferencedSOPInstanceUID != original_sop_uid
+        assert ds.ReferencedFrameOfReferenceSequence[0].RTReferencedStudySequence[0].ReferencedSOPInstanceUID.startswith("1.2.826.0.1.3680043.8.498.")
+
     def test_updates_file_meta_media_storage_sop_instance_uid(self, anonymizer):
+
         """file_meta MediaStorageSOPInstanceUID should match remapped SOPInstanceUID."""
         ds = Dataset()
         ds.file_meta = Dataset()
